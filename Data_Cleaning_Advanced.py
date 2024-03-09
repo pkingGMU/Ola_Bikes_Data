@@ -53,13 +53,15 @@ df['booking_time_diff_hr'].value_counts().to_dict()
 df.to_csv('preprocessed_2.csv',index = False, compression = 'gzip')
 ### Case 1
 # Make our dataframe all the values that are not duplicated number and location within an hour
-df = df[~((df.duplicated(subset=['number','pick_lat','pick_lng'],keep=False)) & (df.booking_time_diff_hr<=1))]
+df_case1 = pd.read_csv('preprocessed_2.csv', compression = 'gzip')
+df_case1 = df_case1[~((df_case1.duplicated(subset=['number','pick_lat','pick_lng'],keep=False)) & (df_case1.booking_time_diff_hr<=1))]
 
 # Preprocess Case 1
-df.to_csv('Case1.csv',index = False, compression = 'gzip')
+df_case1.to_csv('Case1.csv',index = False, compression = 'gzip')
 ### Case 2
-print("Number of rides booked by same customer within 8mins time: {}".format(len(df[(df.booking_time_diff_min<8)])))
-df = df[(df.booking_time_diff_min>=8)]
+df_case2 = pd.read_csv('Case1.csv', compression = 'gzip')
+print("Number of rides booked by same customer within 8mins time: {}".format(len(df_case2[(df_case2.booking_time_diff_min<8)])))
+df_case2 = df_case2[(df_case2.booking_time_diff_min>=8)]
 
 # Using geodesic distance (shortest distance between a long/lat)
 # Function to find geodestic_distance
@@ -68,11 +70,69 @@ def geodestic_distance(pick_lat, pick_lng, drop_lat, drop_lng):
     distance = round(geodesic((pick_lat, pick_lng), (drop_lat,drop_lng)).miles*1.60934, 2)
     return distance
 # Commented this out for now because it takes forever to run
-#df['geodesic_distance'] = np.vectorize(geodestic_distance)(df['pick_lat'],df['pick_lng'],df['drop_lat'],df['pick_lng'])
+df_case2['geodesic_distance'] = np.vectorize(geodestic_distance)(df_case2['pick_lat'],df_case2['pick_lng'],df_case2['drop_lat'],df_case2['pick_lng'])
 
 # Preprocess Case 2
-#df.to_csv('Case2.csv',index = False, compression = 'gzip')
+df_case2.to_csv('Case2.csv',index = False, compression = 'gzip')
 
-df = pd.read_csv('Case2.csv', compression = 'gzip')
-print("Number of Rides Requests less than 50meters: {}".format(len(df[df.geodesic_distance<=0.05])))
+# Case 2.1 Removing ride request less than 0.05 miles = 50 meters
+df_case2_1 = pd.read_csv('Case2.csv', compression = 'gzip')
+print("Number of Rides Requests less than 50meters: {}".format(len(df_case2_1[df_case2_1.geodesic_distance<=0.05])))
+
+# Remove ride requests
+df_case2_1 = df_case2_1[df_case2_1.geodesic_distance>0.05]
+df_case2_1.to_csv('Case2_1.csv',index = False, compression = 'gzip')
+
+### Case 3
+# India: 'boundingbox': ['6.2325274', '35.6745457', '68.1113787', '97.395561']
+# Bangalore: 'boundingbox': ['12.8340125', '13.1436649', '77.4601025', '77.7840515']
+# Karnataka: 'boundingbox': ['11.5945587', '18.4767308', '74.0543908', '78.588083']
+
+df_case3 = pd.read_csv('Case2_1.csv', compression = 'gzip')
+
+# Returns raw location data
+location = geolocator.geocode("India")
+
+# Rides outside of india
+df_case3.reset_index(inplace = True, drop = True)
+outside_India = df_case3[(df_case3.pick_lat<=6.2325274) | (df_case3.pick_lat>=35.6745457) | (df_case3.pick_lng<=68.1113787) | (df_case3.pick_lng>=97.395561) | (df_case3.drop_lat<=6.2325274) | (df_case3.drop_lat>=35.6745457) | (df_case3.drop_lng<=68.1113787) | (df_case3.drop_lng>=97.395561)]
+
+# Reset index while also dropping anything that is in outside india
+df_case3 = df_case3[~df_case3.index.isin(outside_India.index)].reset_index(drop = True)
+
+# Number of good ride requests
+print("Number of Good Ride Requests: {}".format(len(df_case3)))
+
+# Pickups outside Bangalore
+pck_outside_bng = df_case3[(df_case3.pick_lat<=12.8340125) | (df_case3.pick_lat>=13.1436649) | (df_case3.pick_lng<=77.4601025) | (df_case3.pick_lng>=77.7840515)]
+# Dropoffs outside Bangalore
+drp_outside_bng = df_case3[(df_case3.drop_lat<=12.8340125) | (df_case3.drop_lat>=13.1436649) | (df_case3.drop_lng<=77.4601025) | (df_case3.drop_lng>=77.7840515)]
+
+# Bouding pickup within state karnataka
+pck_outside_KA = df_case3[(df_case3.pick_lat<=11.5945587) | (df_case3.pick_lat>=18.4767308) | (df_case3.pick_lng<=74.0543908) | (df_case3.pick_lng>=78.588083)]
+drp_outside_KA = df_case3[(df_case3.drop_lat<=11.5945587) | (df_case3.drop_lat>=18.4767308) | (df_case3.drop_lng<=74.0543908) | (df_case3.drop_lng>=78.588083)]
+
+# Total rides outside karnataka:
+total_ride_outside_KA = df_case3[(df_case3.pick_lat<=11.5945587) | (df_case3.pick_lat>=18.4767308) | (df_case3.pick_lng<=74.0543908) | (df_case3.pick_lng>=78.588083) | (df_case3.drop_lat<=11.5945587) | (df_case3.drop_lat>=18.4767308) | (df_case3.drop_lng<=74.0543908) | (df_case3.drop_lng>=78.588083)]
+
+print("Total Ride Outside Karnataka: {}".format(len(total_ride_outside_KA)))
+
+# Suspected bad rides
+suspected_bad_rides = total_ride_outside_KA[total_ride_outside_KA.geodesic_distance > 500]
+
+# Remove suspected bad rides
+df_case3 = df_case3[~df_case3.index.isin(suspected_bad_rides.index)].reset_index(drop = True)
+
+# Final cleaned dataset
+dataset = df_case3[['ts', 'number', 'pick_lat','pick_lng','drop_lat','drop_lng','geodesic_distance','hour','mins','day','month','year','dayofweek','booking_timestamp','booking_time_diff_hr', 'booking_time_diff_min']]
+
+# Final cleaned dataset to csv
+dataset.to_csv('clean_data.csv',index = False, compression = 'gzip')
+
+# Final print
+df = pd.read_csv('clean_data.csv', compression = 'gzip')
+print("Number of Good Ride Requests: {}".format(len(df)))
+
+
+
 
